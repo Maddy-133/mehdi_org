@@ -1,0 +1,87 @@
+pool: DevOps-Agents
+
+trigger:
+- main
+- features/*
+
+stages:
+  - stage: terraform_install
+    displayName: Installing terraform on self hosted VM
+    jobs:
+      - job: terraform_install
+        steps:
+        - task: TerraformInstaller@1
+          inputs:
+            terraformVersion: 'latest'
+
+  - stage: terraform_init
+    displayName: Terraform init
+    jobs:
+      - job: terraform_init
+        steps:
+        - task: TerraformTask@5
+          inputs:
+            provider: 'azurerm'
+            command: 'init'
+            workingDirectory: '$(System.DefaultWorkingDirectory)/terraform'
+            backendAzureRmStorageAccountName: 'tfstatestoragepipeline'
+            backendAzureRmContainerName: 'tfstate'
+            backendAzureRmKey: 'infra.tfstate'
+
+  - stage: terraform_validate
+    displayName: Validation in terraform
+    jobs:
+      - job: terraform_validate
+        steps:
+        - task: TerraformTask@5
+          inputs:
+            provider: 'azurerm'
+            command: 'validate'
+            workingDirectory: '$(System.DefaultWorkingDirectory)/terraform'
+
+  - stage: terraform_plan
+    displayName: We need to add Init before using plan as every stage is individual and can work paralle
+    jobs:
+      - job: terraform_init
+        steps:
+        - task: TerraformTask@5
+          inputs:
+            provider: 'azurerm'
+            command: 'init'
+            workingDirectory: '$(System.DefaultWorkingDirectory)/terraform'
+            backendAzureRmStorageAccountName: 'tfstatestoragepipeline'
+            backendAzureRmContainerName: 'tfstate'
+            backendAzureRmKey: 'infra.tfstate'
+        
+      - job: terraform_plan
+        steps:
+        - task: TerraformTask@5
+          inputs:
+            provider: 'azurerm'
+            command: 'plan'
+            workingDirectory: '$(System.DefaultWorkingDirectory)/terraform'
+            environmentServiceNameAzureRM: 'Azure-to-ADO'
+
+  - stage: terraform_apply
+    displayName: Terraform apply with terraform init
+    jobs:
+    - job: terraform_init
+      steps:
+        - task: TerraformTask@5
+          inputs:
+            provider: 'azurerm'
+            command: 'init'
+            workingDirectory: '$(System.DefaultWorkingDirectory)/terraform'
+            backendAzureRmStorageAccountName: 'tfstatestoragepipeline'
+            backendAzureRmContainerName: 'tfstate'
+            backendAzureRmKey: 'infra.tfstate'
+      
+    - job: terraform_apply
+      displayName: Terraform Apply
+      steps:
+      - task: TerraformTask@5
+        inputs:
+          provider: 'azurerm'
+          command: 'apply'
+          workingDirectory: '$(System.DefaultWorkingDirectory)/terraform'
+          environmentServiceNameAzureRM: 'Azure-to-ADO'

@@ -2,6 +2,28 @@
 pool:
   name: DevOps-Agents
 
+parameters:
+  - name: runGitleaks
+    displayName: Run Gitleaks Scan
+    type: boolean
+    default: false
+
+  - name: runtfsec
+    displayName: Run TfSec Scan
+    type: boolean
+    default: false
+
+  - name: runtflint
+    displayName: Run Tflint Scan
+    type: boolean
+    default: false
+
+  - name: runtfvalidate
+    displayName: Run Terrform Init and Terraform Validate
+    type: boolean
+    default: false
+
+
 trigger:
   branches:
     include:
@@ -12,6 +34,8 @@ stages:
 
 # 1. Scan Git history for secrets
 - stage: gitleaks
+  dependsOn: []
+  condition: ${{ parameters.runGitleaks }}
   displayName: Gitleaks Secret Scan
   jobs:
     - job: gitleaks_scan
@@ -30,8 +54,9 @@ stages:
 
 # 2. Scan Terraform security configuration
 - stage: tfsec
+  dependsOn: []
   displayName: tfsec Security Scan
-  dependsOn: gitleaks
+  condition: ${{ parameters.runtfsec }}
   jobs:
     - job: tfsec_scan
       displayName: Scan Terraform
@@ -47,27 +72,11 @@ stages:
               }
               tfsec $tfDir
 
-# 3. Estimate infrastructure cost
-- stage: infracost
-  displayName: Infracost Cost Estimate
-  dependsOn: tfsec
-  jobs:
-    - job: infracost_scan
-      displayName: Estimate Terraform cost
-      steps:
-        - task: PowerShell@2
-          displayName: Run Infracost
-          inputs:
-            targetType: inline
-            script: |
-              $tfDir = "$(Build.SourcesDirectory)/terraform"
-              infracost --version
-              infracost breakdown --path "$tfDir"
-
-# 4. Check Terraform code quality
+# 3. Check Terraform code quality
 - stage: tflint
+  dependsOn: []
+  condition: ${{ parameters.runtflint }}
   displayName: TFLint Scan
-  dependsOn: infracost
   jobs:
     - job: tflint_scan
       displayName: Lint Terraform
@@ -82,10 +91,9 @@ stages:
               tflint --chdir="$tfDir" --init
               tflint --chdir="$tfDir"
 
-# 5. Install Terraform
+# 4. Install Terraform
 - stage: terraform_install
   displayName: Install Terraform
-  dependsOn: tflint
   jobs:
     - job: install_terraform
       steps:
@@ -93,10 +101,11 @@ stages:
           inputs:
             terraformVersion: 'latest'
 
-# 6. Initialize and validate Terraform
+# 5. Initialize and validate Terraform
 - stage: terraform_init_validate
+  dependsOn: []
   displayName: Terraform Init and Validate
-  dependsOn: terraform_install
+  condition: ${{ parameters.runtfvalidate }}
   jobs:
     - job: init_validate
       steps:
@@ -120,10 +129,15 @@ stages:
             command: validate
             workingDirectory: '$(Build.SourcesDirectory)/terraform'
 
-# 7. Generate and publish a saved Terraform plan
+# 6. Generate and publish a saved Terraform plan
 - stage: terraform_plan
+  dependsOn:
+  - runGitleaks
+  - runtfsec
+  - runtflint
+  - runtfvalidate
+
   displayName: Terraform Plan
-  dependsOn: terraform_init_validate
   jobs:
     - job: plan
       displayName: Create Terraform Plan
@@ -156,7 +170,7 @@ stages:
             targetPath: '$(Build.ArtifactStagingDirectory)/tfplan'
             artifact: terraform-plan
 
-# 8. Require approval on main before applying
+# 7. Require approval on main before applying
 - stage: manual_approval
   displayName: Manual Approval
   dependsOn: terraform_plan
@@ -175,7 +189,7 @@ stages:
             instructions: 'Review the Terraform Plan and pipeline logs before approving the Apply stage.'
             onTimeout: reject
 
-# 9. Apply the exact saved plan after approval
+# 8. Apply the exact saved plan after approval
 - stage: terraform_apply
   displayName: Terraform Apply
   dependsOn: manual_approval

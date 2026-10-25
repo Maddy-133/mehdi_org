@@ -1,0 +1,400 @@
+
+pool:
+  name: DevOps-Agents
+
+parameters:
+  - name: runGitleaks
+    displayName: Run Gitleaks Scan
+    type: boolean
+    default: false
+
+  - name: runtfsec
+    displayName: Run tfsec Scan
+    type: boolean
+    default: false
+
+  - name: runtflint
+    displayName: Run TFLint Scan
+    type: boolean
+    default: false
+
+  - name: runtfvalidate
+    displayName: Run Terraform Init and Validate
+    type: boolean
+    default: false
+
+trigger:
+  branches:
+    include:
+      - main
+      - features/*
+
+stages:
+
+# 1. Gitleaks: scan Git history for secrets
+- stage: gitleaks
+  displayName: Gitleaks Secret Scan
+  dependsOn: []
+  condition: ${{ parameters.runGitleaks }}
+
+  jobs:
+    - job: gitleaks_scan
+      displayName: Scan Repository for Secrets
+
+      steps:
+        - checkout: self
+          fetchDepth: 0
+
+        - task: PowerShell@2
+          displayName: Run Gitleaks and Generate Report
+          inputs:
+            targetType: inline
+            script: |
+              $reportDir = "$(Build.ArtifactStagingDirectory)/scan-reports/gitleaks"
+              New-Item -ItemType Directory -Force -Path $reportDir | Out-Null
+              Set-Content "$reportDir/scan-status.txt" "Gitleaks scan started"
+
+              gitleaks version
+              if ($LASTEXITCODE -ne 0) {
+                throw "Gitleaks is unavailable"
+              }
+
+              gitleaks git `
+                --redact `
+                --report-format json `
+                --report-path "$reportDir/gitleaks-report.json" `
+                --exit-code 1 `
+                "$(Build.SourcesDirectory)"
+
+              $scanExitCode = $LASTEXITCODE
+
+              if ($scanExitCode -ne 0) {
+                Set-Content "$reportDir/scan-status.txt" "Gitleaks failed or found secrets"
+                throw "Gitleaks scan failed. Review the report."
+              }
+
+              Set-Content "$reportDir/scan-status.txt" "Gitleaks scan passed"
+
+        - task: PublishPipelineArtifact@1
+          displayName: Publish Gitleaks Report
+          condition: always()
+          inputs:
+            targetPath: '$(Build.ArtifactStagingDirectory)/scan-reports/gitleaks'
+            artifact: gitleaks-report
+
+
+# 2. tfsec: scan Terraform security
+- stage: tfsec
+  displayName: tfsec Security Scan
+  dependsOn: []
+  condition: ${{ parameters.runtfsec }}
+
+  jobs:
+    - job: tfsec_scan
+      displayName: Scan Terraform Security
+
+      steps:
+        - checkout: self
+
+        - task: PowerShell@2
+          displayName: Run tfsec and Generate Report
+          inputs:
+            targetType: inline
+            script: |
+              $reportDir = "$(Build.ArtifactStagingDirectory)/scan-reports/tfsec"
+              New-Item -ItemType Directory -Force -Path $reportDir | Out-Null
+              Set-Content "$reportDir/scan-status.txt" "tfsec scan started"
+
+              tfsec --version
+              if ($LASTEXITCODE -ne 0) {
+                throw "tfsec is unavailable"
+              }
+
+              $tfDir = "$(Build.SourcesDirectory)/terraform"
+
+              if (!(Test-Path $tfDir)) {
+                throw "Terraform directory not found: $tfDir"
+              }
+
+              tfsec $tfDir `
+                --format json `
+                --out "$reportDir/tfsec-report.json"
+
+              $scanExitCode = $LASTEXITCODE
+
+              if ($scanExitCode -ne 0) {
+                Set-Content "$reportDir/scan-status.txt" "tfsec failed or reported findings"
+                throw "tfsec scan failed. Review the report."
+              }
+
+              Set-Content "$reportDir/scan-status.txt" "tfsec scan passed"
+
+        - task: PublishPipelineArtifact@1
+          displayName: Publish tfsec Report
+          condition: always()
+          inputs:
+            targetPath: '$(Build.ArtifactStagingDirectory)/scan-reports/tfsec'
+            artifact: tfsec-report
+
+
+# 3. TFLint: check Terraform code quality
+- stage: tflint
+  displayName: TFLint Code Quality Scan
+  dependsOn: []
+  condition: ${{ parameters.runtflint }}
+
+  jobs:
+    - job: tflint_scan
+      displayName: Lint Terraform
+
+      steps:
+        - checkout: self
+
+        - task: PowerShell@2
+          displayName: Run TFLint and Generate Report
+          inputs:
+            targetType: inline
+            script: |
+              $reportDir = "$(Build.ArtifactStagingDirectory)/scan-reports/tflint"
+              New-Item -ItemType Directory -Force -Path $reportDir | Out-Null
+              Set-Content "$reportDir/scan-status.txt" "TFLint scan started"
+
+              tflint --version
+              if ($LASTEXITCODE -ne 0) {
+                throw "TFLint is unavailable"
+              }
+
+              $tfDir = "$(Build.SourcesDirectory)/terraform"
+
+              if (!(Test-Path $tfDir)) {
+                throw "Terraform directory not found: $tfDir"
+              }
+
+              tflint --chdir="$tfDir" --init
+              if ($LASTEXITCODE -ne 0) {
+                throw "TFLint initialization failed"
+              }
+
+              tflint --chdir="$tfDir" --format=json |
+                Out-File "$reportDir/tflint-report.json" -Encoding utf8
+
+              $scanExitCode = $LASTEXITCODE
+
+              if ($scanExitCode -ne 0) {
+                Set-Content "$reportDir/scan-status.txt" "TFLint failed or reported issues"
+                throw "TFLint scan failed. Review the report."
+              }
+
+              Set-Content "$reportDir/scan-status.txt" "TFLint scan passed"
+
+        - task: PublishPipelineArtifact@1
+          displayName: Publish TFLint Report
+          condition: always()
+          inputs:
+            targetPath: '$(Build.ArtifactStagingDirectory)/scan-reports/tflint'
+            artifact: tflint-report
+
+
+# 4. Terraform Init and Validate (optional)
+- stage: terraform_init_validate
+  displayName: Terraform Init and Validate
+  dependsOn: []
+  condition: ${{ parameters.runtfvalidate }}
+
+  jobs:
+    - job: init_validate
+      displayName: Initialize and Validate Terraform
+
+      steps:
+        - checkout: self
+
+        - task: PowerShell@2
+          displayName: Verify Terraform
+          inputs:
+            targetType: inline
+            script: |
+              terraform --version
+              if ($LASTEXITCODE -ne 0) {
+                throw "Terraform is unavailable on the agent"
+              }
+
+        - task: TerraformTask@5
+          displayName: Terraform Init
+          inputs:
+            provider: azurerm
+            command: init
+            workingDirectory: '$(Build.SourcesDirectory)/terraform'
+            backendServiceArm: 'Azure-to-ADO'
+            backendAzureRmStorageAccountName: 'tfstatestoragepipeline'
+            backendAzureRmContainerName: 'tfstate'
+            backendAzureRmKey: 'infra.tfstate'
+
+        - task: TerraformTask@5
+          displayName: Terraform Validate
+          inputs:
+            provider: azurerm
+            command: validate
+            workingDirectory: '$(Build.SourcesDirectory)/terraform'
+
+
+# 5. Terraform Plan: wait for selected checks
+- stage: terraform_plan
+  displayName: Terraform Plan
+
+  dependsOn:
+    - gitleaks
+    - tfsec
+    - tflint
+    - terraform_init_validate
+
+  condition: |
+    and(
+      not(canceled()),
+      or(
+        eq('${{ parameters.runGitleaks }}', 'false'),
+        eq(dependencies.gitleaks.result, 'Succeeded')
+      ),
+      or(
+        eq('${{ parameters.runtfsec }}', 'false'),
+        eq(dependencies.tfsec.result, 'Succeeded')
+      ),
+      or(
+        eq('${{ parameters.runtflint }}', 'false'),
+        eq(dependencies.tflint.result, 'Succeeded')
+      ),
+      or(
+        eq('${{ parameters.runtfvalidate }}', 'false'),
+        eq(dependencies.terraform_init_validate.result, 'Succeeded')
+      )
+    )
+
+  jobs:
+    - job: plan
+      displayName: Create Terraform Plan
+
+      steps:
+        - checkout: self
+
+        - task: PowerShell@2
+          displayName: Verify Terraform
+          inputs:
+            targetType: inline
+            script: |
+              terraform --version
+              if ($LASTEXITCODE -ne 0) {
+                throw "Terraform is unavailable on the agent"
+              }
+
+        - task: TerraformTask@5
+          displayName: Terraform Init
+          inputs:
+            provider: azurerm
+            command: init
+            workingDirectory: '$(Build.SourcesDirectory)/terraform'
+            backendServiceArm: 'Azure-to-ADO'
+            backendAzureRmStorageAccountName: 'tfstatestoragepipeline'
+            backendAzureRmContainerName: 'tfstate'
+            backendAzureRmKey: 'infra.tfstate'
+
+        - task: PowerShell@2
+          displayName: Create Artifact Directory
+          inputs:
+            targetType: inline
+            script: |
+              New-Item -ItemType Directory -Force `
+                -Path "$(Build.ArtifactStagingDirectory)" | Out-Null
+
+        - task: TerraformTask@5
+          displayName: Terraform Plan
+          inputs:
+            provider: azurerm
+            command: plan
+            workingDirectory: '$(Build.SourcesDirectory)/terraform'
+            environmentServiceNameAzureRM: 'Azure-to-ADO'
+            commandOptions: '-out="$(Build.ArtifactStagingDirectory)/tfplan"'
+
+        - task: PublishPipelineArtifact@1
+          displayName: Publish Saved Terraform Plan
+          inputs:
+            targetPath: '$(Build.ArtifactStagingDirectory)/tfplan'
+            artifact: terraform-plan
+
+
+# 6. Manual approval: main branch only
+- stage: manual_approval
+  displayName: Manual Approval
+  dependsOn: terraform_plan
+  condition: |
+    and(
+      succeeded(),
+      eq(variables['Build.SourceBranch'], 'refs/heads/main')
+    )
+
+  jobs:
+    - job: approval
+      displayName: Review Terraform Plan
+      pool: server
+      timeoutInMinutes: 1440
+
+      steps:
+        - task: ManualValidation@1
+          timeoutInMinutes: 1440
+          inputs:
+            notifyUsers: 'mailtomehdi133@gmail.com'
+            approvers: 'mailtomehdi133@gmail.com'
+            instructions: 'Review the Terraform Plan and scan reports before approving deployment.'
+            onTimeout: reject
+
+
+# 7. Apply the saved plan after approval
+- stage: terraform_apply
+  displayName: Terraform Apply
+  dependsOn: manual_approval
+  condition: |
+    and(
+      succeeded(),
+      eq(variables['Build.SourceBranch'], 'refs/heads/main')
+    )
+
+  jobs:
+    - job: apply
+      displayName: Apply Approved Terraform Plan
+
+      steps:
+        - checkout: self
+
+        - task: PowerShell@2
+          displayName: Verify Terraform
+          inputs:
+            targetType: inline
+            script: |
+              terraform --version
+              if ($LASTEXITCODE -ne 0) {
+                throw "Terraform is unavailable on the agent"
+              }
+
+        - task: DownloadPipelineArtifact@2
+          displayName: Download Saved Plan
+          inputs:
+            artifact: terraform-plan
+            path: '$(Pipeline.Workspace)/terraform-plan'
+
+        - task: TerraformTask@5
+          displayName: Terraform Init
+          inputs:
+            provider: azurerm
+            command: init
+            workingDirectory: '$(Build.SourcesDirectory)/terraform'
+            backendServiceArm: 'Azure-to-ADO'
+            backendAzureRmStorageAccountName: 'tfstatestoragepipeline'
+            backendAzureRmContainerName: 'tfstate'
+            backendAzureRmKey: 'infra.tfstate'
+
+        - task: TerraformTask@5
+          displayName: Apply Saved Terraform Plan
+          inputs:
+            provider: azurerm
+            command: apply
+            workingDirectory: '$(Build.SourcesDirectory)/terraform'
+            environmentServiceNameAzureRM: 'Azure-to-ADO'
+            commandOptions: '"$(Pipeline.Workspace)/terraform-plan/tfplan"'

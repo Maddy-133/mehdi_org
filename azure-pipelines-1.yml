@@ -375,14 +375,36 @@ stages:
         - checkout: self
 
         - task: PowerShell@2
-          displayName: Verify Terraform
+          displayName: Generate Readable Terraform Plan
           inputs:
             targetType: inline
             script: |
-              terraform --version
-              if ($LASTEXITCODE -ne 0) {
-                throw "Terraform is unavailable on the agent"
+              $tfDir = "$(Build.SourcesDirectory)/terraform"
+              $planFile = "$(Build.ArtifactStagingDirectory)/tfplan"
+              $reportFile = "$(Build.ArtifactStagingDirectory)/tfplan.txt"
+
+              if (!(Test-Path $planFile)) {
+                throw "Saved Terraform plan not found: $planFile"
               }
+
+              if (!(Test-Path "$tfDir/.terraform/providers")) {
+                throw "Terraform provider files not found. Check Terraform Init."
+              }
+
+              Set-Location $tfDir
+
+              Write-Host "Terraform version:"
+              terraform --version
+
+              Write-Host "Generating readable plan..."
+              terraform show -no-color $planFile |
+                Out-File $reportFile -Encoding utf8
+
+              if ($LASTEXITCODE -ne 0) {
+                throw "Failed to generate readable Terraform plan."
+              }
+
+              Write-Host "Readable plan saved to: $reportFile"
 
         - task: DownloadPipelineArtifact@2
           displayName: Download Saved Plan

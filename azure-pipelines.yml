@@ -38,6 +38,7 @@ stages:
           inputs:
             provider: 'azurerm'
             command: 'validate'
+            terraformVersion: 'latest'
             workingDirectory: '$(System.DefaultWorkingDirectory)/terraform'
 
   - stage: terraform_plan

@@ -132,10 +132,10 @@ stages:
 # 6. Generate and publish a saved Terraform plan
 - stage: terraform_plan
   dependsOn:
-  - runGitleaks
-  - runtfsec
-  - runtflint
-  - runtfvalidate
+  - gitleaks
+  - tfsec
+  - tflint
+  - terraform_init_validate
 
   displayName: Terraform Plan
   jobs:

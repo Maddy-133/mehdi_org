@@ -28,17 +28,11 @@ stages:
             backendAzureRmStorageAccountName: 'tfstatestoragepipeline'
             backendAzureRmContainerName: 'tfstate'
             backendAzureRmKey: 'infra.tfstate'
-
-  - stage: terraform_validate
-    displayName: Validation in terraform
-    jobs:
-      - job: terraform_validate
-        steps:
         - task: TerraformTask@5
+          displayName: Terraform Validate
           inputs:
             provider: 'azurerm'
             command: 'validate'
-            terraformVersion: 'latest'
             workingDirectory: '$(System.DefaultWorkingDirectory)/terraform'
 
   - stage: terraform_plan

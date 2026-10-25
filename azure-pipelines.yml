@@ -137,6 +137,27 @@ stages:
   - tflint
   - terraform_init_validate
 
+  condition: |
+    and(
+      not(canceled()),
+      or(
+        eq('${{ parameters.runGitleaks }}', 'false'),
+        eq(dependencies.gitleaks.result, 'Succeeded')
+      ),
+      or(
+        eq('${{ parameters.runtfsec }}', 'false'),
+        eq(dependencies.tfsec.result, 'Succeeded')
+      ),
+      or(
+        eq('${{ parameters.runtflint }}', 'false'),
+        eq(dependencies.tflint.result, 'Succeeded')
+      ),
+      or(
+        eq('${{ parameters.runtfvalidate }}', 'false'),
+        eq(dependencies.terraform_init_validate.result, 'Succeeded')
+      )
+    )
+
   displayName: Terraform Plan
   jobs:
     - job: plan

@@ -40,7 +40,7 @@ stages:
             workingDirectory: '$(System.DefaultWorkingDirectory)/terraform'
 
   - stage: terraform_plan
-    displayName: We need to add Init before using plan as every stage is individual and can work paralle
+    displayName: Init + Plan
     jobs:
       - job: terraform_init
         steps:
@@ -54,6 +54,7 @@ stages:
             backendAzureRmKey: 'infra.tfstate'
         
       - job: terraform_plan
+        dependsOn: terraform_init
         steps:
         - task: TerraformTask@5
           inputs:
@@ -62,8 +63,22 @@ stages:
             workingDirectory: '$(System.DefaultWorkingDirectory)/terraform'
             environmentServiceNameAzureRM: 'Azure-to-ADO'
 
+  - stage: manual_approval
+    displayName: need manual approval on this
+    pool: server
+    jobs:
+      - job: approval
+        steps:
+        - task: ManualValidation@1
+          inputs:
+            notifyUsers: 'mailtomehdi133@gmail.com'
+            approvers: 'mailtomehdi133@gmail.com'
+            instructions: 'Please review the Terraform Plan before approving the Apply stage.'
+        
+
   - stage: terraform_apply
-    displayName: Terraform apply with terraform init
+    dependsOn: manual_approval
+    displayName: Init + Apply
     jobs:
     - job: terraform_init
       steps:
@@ -77,6 +92,7 @@ stages:
             backendAzureRmKey: 'infra.tfstate'
       
     - job: terraform_apply
+      dependsOn: terraform_init
       displayName: Terraform Apply
       steps:
       - task: TerraformTask@5

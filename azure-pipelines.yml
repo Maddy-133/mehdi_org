@@ -50,7 +50,7 @@ stages:
             targetType: inline
             script: |
               gitleaks version
-              gitleaks git --redact --exit-code 1
+              gitleaks git --redact --exit-code 1 "$(Build.SourcesDirectory)"
 
 # 2. Scan Terraform security configuration
 - stage: tfsec

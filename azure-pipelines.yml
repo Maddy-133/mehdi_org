@@ -74,6 +74,11 @@ stages:
   - stage: terraform_apply
     dependsOn: manual_approval
     displayName: Init + Apply
+    condition: and(
+      succeeded(),
+      eq(variables['Build.SourceBranch'], 'refs/heads/main')
+      )
+    
     jobs:
     - job: terraform_apply
       steps:

@@ -313,6 +313,17 @@ stages:
             environmentServiceNameAzureRM: 'Azure-to-ADO'
             commandOptions: '-out="$(Build.ArtifactStagingDirectory)/tfplan"'
 
+
+        # Generate a readable plan for the manager
+        - task: PowerShell@2
+          displayName: Generate Readable Terraform Plan
+          inputs:
+            targetType: inline
+            script: |
+              terraform show -no-color "$(Build.ArtifactStagingDirectory)/tfplan" |
+              Out-File "$(Build.ArtifactStagingDirectory)/tfplan.txt" -Encoding utf8
+
+        # Publish both the saved plan and readable report
         - task: PublishPipelineArtifact@1
           displayName: Publish Saved Terraform Plan
           inputs:

@@ -1,10 +1,22 @@
+# Azure DevOps pipeline for Terraform on a self-hosted Windows agent.
+# High-level flow:
+#   1) Optional scanners run independently and can run in parallel.
+#   2) Terraform Plan runs only if every scanner/validation step selected at queue time passes.
+#   3) A readable plan and the binary plan are published as an artifact.
+#   4) main branch runs pause for manual approval.
+#   5) Apply uses the exact saved binary plan after approval.
+#
+# IMPORTANT:
+# - terraformDirectory points to the Terraform root folder; change it if your repo layout differs.
+# - Keep the Terraform version pinned to the version approved by your repo before production use.
+# - Terraform plan files/reports may contain sensitive infrastructure details; restrict artifact access.
 pool:
   name: DevOps-Agents
 
-# For production, replace "latest" with the exact Terraform version
-# approved for your repository, and keep it identical in Plan and Apply.
 variables:
+  # Replace 'latest' with the exact approved version for reproducible Plan/Apply runs.
   terraformVersion: 'latest'
+  terraformDirectory: '$(Build.SourcesDirectory)/terraform'
 
 parameters:
   - name: runGitleaks
@@ -34,7 +46,7 @@ trigger:
       - features/*
 
 stages:
-# 1. Gitleaks: scan Git history for secrets
+# 1. Gitleaks: scan Git history for secrets. fetchDepth: 0 lets it inspect history.
 - stage: gitleaks
   displayName: Gitleaks Secret Scan
   dependsOn: []
@@ -82,7 +94,7 @@ stages:
             targetPath: '$(Build.ArtifactStagingDirectory)/scan-reports/gitleaks'
             artifact: gitleaks-report
 
-# 2. tfsec: scan Terraform security
+# 2. tfsec: scan Terraform security misconfigurations.
 - stage: tfsec
   displayName: tfsec Security Scan
   dependsOn: []
@@ -107,7 +119,7 @@ stages:
                 throw "tfsec is unavailable on the agent."
               }
 
-              $tfDir = "$(Build.SourcesDirectory)/terraform"
+              $tfDir = "$(terraformDirectory)"
               if (!(Test-Path $tfDir)) {
                 throw "Terraform directory not found: $tfDir"
               }
@@ -129,7 +141,7 @@ stages:
             targetPath: '$(Build.ArtifactStagingDirectory)/scan-reports/tfsec'
             artifact: tfsec-report
 
-# 3. TFLint: check Terraform code quality
+# 3. TFLint: check Terraform syntax/provider-specific rules and code quality.
 - stage: tflint
   displayName: TFLint Code Quality Scan
   dependsOn: []
@@ -154,7 +166,7 @@ stages:
                 throw "TFLint is unavailable on the agent."
               }
 
-              $tfDir = "$(Build.SourcesDirectory)/terraform"
+              $tfDir = "$(terraformDirectory)"
               if (!(Test-Path $tfDir)) {
                 throw "Terraform directory not found: $tfDir"
               }
@@ -183,7 +195,7 @@ stages:
             targetPath: '$(Build.ArtifactStagingDirectory)/scan-reports/tflint'
             artifact: tflint-report
 
-# 4. Optional Terraform Init and Validate
+# 4. Optional validation stage. Enable it when you want a separate init/validate gate.
 - stage: terraform_init_validate
   displayName: Terraform Init and Validate
   dependsOn: []
@@ -204,7 +216,7 @@ stages:
           inputs:
             provider: azurerm
             command: init
-            workingDirectory: '$(Build.SourcesDirectory)/terraform'
+            workingDirectory: '$(terraformDirectory)'
             backendServiceArm: 'Azure-to-ADO'
             backendAzureRmStorageAccountName: 'tfstatestoragepipeline'
             backendAzureRmContainerName: 'tfstate'
@@ -215,7 +227,7 @@ stages:
           inputs:
             provider: azurerm
             command: validate
-            workingDirectory: '$(Build.SourcesDirectory)/terraform'
+            workingDirectory: '$(terraformDirectory)'
 
 # 5. Terraform Plan: selected checks must succeed; disabled checks may be skipped.
 # Note: the scanner scripts intentionally fail their stage when findings are detected.
@@ -226,26 +238,26 @@ stages:
     - tfsec
     - tflint
     - terraform_init_validate
-  # Plan runs only when every selected check succeeded.
-  # Disabled optional stages are expected to be Skipped and do not block Plan.
+  # Selected checks must pass. Unselected checks are skipped and do not block Plan.
+  # Keep each parameter check paired with its corresponding dependency result.
   condition: |
     and(
       not(canceled()),
       or(
         eq('${{ parameters.runGitleaks }}', 'false'),
-        in(dependencies.gitleaks.result, 'Succeeded')
+        eq(dependencies.gitleaks.result, 'Succeeded')
       ),
       or(
         eq('${{ parameters.runtfsec }}', 'false'),
-        in(dependencies.tfsec.result, 'Succeeded')
+        eq(dependencies.tfsec.result, 'Succeeded')
       ),
       or(
         eq('${{ parameters.runtflint }}', 'false'),
-        in(dependencies.tflint.result, 'Succeeded')
+        eq(dependencies.tflint.result, 'Succeeded')
       ),
       or(
         eq('${{ parameters.runtfvalidate }}', 'false'),
-        in(dependencies.terraform_init_validate.result, 'Succeeded')
+        eq(dependencies.terraform_init_validate.result, 'Succeeded')
       )
     )
   jobs:
@@ -273,7 +285,7 @@ stages:
           inputs:
             provider: azurerm
             command: init
-            workingDirectory: '$(Build.SourcesDirectory)/terraform'
+            workingDirectory: '$(terraformDirectory)'
             backendServiceArm: 'Azure-to-ADO'
             backendAzureRmStorageAccountName: 'tfstatestoragepipeline'
             backendAzureRmContainerName: 'tfstate'
@@ -284,73 +296,17 @@ stages:
           inputs:
             provider: azurerm
             command: plan
-            workingDirectory: '$(Build.SourcesDirectory)/terraform'
+            workingDirectory: '$(terraformDirectory)'
             environmentServiceNameAzureRM: 'Azure-to-ADO'
             commandOptions: '-out="$(Build.ArtifactStagingDirectory)/tfplan"'
 
-        # Infracost cost estimate. Configure INFRACOST_API_KEY as a secret pipeline variable.
-        - task: PowerShell@2
-          displayName: Download Infracost and Generate Cost Estimate
-          inputs:
-            targetType: inline
-            script: |
-              $ErrorActionPreference = "Stop"
-              $infracostVersion = "0.10.46"
-              $toolDir = "$(Agent.TempDirectory)\infracost"
-              $zipPath = "$(Agent.TempDirectory)\infracost-windows-amd64.zip"
-              $tfDir = "$(Build.SourcesDirectory)\terraform"
-              $reportDir = "$(Build.ArtifactStagingDirectory)\infracost"
-              $reportJson = Join-Path $reportDir "infracost-breakdown.json"
-
-              New-Item -ItemType Directory -Force -Path $toolDir, $reportDir | Out-Null
-
-              $downloadUrl = "https://github.com/infracost/infracost/releases/download/v$infracostVersion/infracost-windows-amd64.zip"
-              Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath
-              Expand-Archive -LiteralPath $zipPath -DestinationPath $toolDir -Force
-
-              $infracostExe = Get-ChildItem -Path $toolDir -Filter "infracost.exe" -Recurse |
-                Select-Object -First 1 -ExpandProperty FullName
-              if (!$infracostExe) {
-                throw "infracost.exe was not found after extracting the downloaded ZIP."
-              }
-
-              & $infracostExe --version
-              if ($LASTEXITCODE -ne 0) {
-                throw "Infracost executable failed to start."
-              }
-
-              if (!(Test-Path $tfDir)) {
-                throw "Terraform directory not found: $tfDir"
-              }
-              if ([string]::IsNullOrWhiteSpace($env:INFRACOST_API_KEY)) {
-                throw "INFRACOST_API_KEY is not set. Add it as a secret pipeline variable."
-              }
-
-              & $infracostExe breakdown --path $tfDir --format json --out-file $reportJson
-              $infracostExitCode = $LASTEXITCODE
-              if ($infracostExitCode -ne 0) {
-                throw "Infracost breakdown failed. Review the task log."
-              }
-
-              Write-Host "Infracost JSON report created: $reportJson"
-          env:
-            INFRACOST_API_KEY: $(INFRACOST_API_KEY)
-
-        - task: PublishPipelineArtifact@1
-          displayName: Publish Infracost Cost Estimate
-          condition: always()
-          inputs:
-            targetPath: '$(Build.ArtifactStagingDirectory)/infracost'
-            artifact: infracost-report
-
-        # Run from the Terraform configuration directory so the initialized
-        # provider installation and configuration are in context.
+        # Convert the saved binary plan to readable text for human review.
         - task: PowerShell@2
           displayName: Generate Readable Terraform Plan
           inputs:
             targetType: inline
             script: |
-              $tfDir = "$(Build.SourcesDirectory)/terraform"
+              $tfDir = "$(terraformDirectory)"
               $planFile = "$(Build.ArtifactStagingDirectory)/tfplan"
               $reportFile = "$(Build.ArtifactStagingDirectory)/tfplan.txt"
 
@@ -380,7 +336,7 @@ stages:
             targetPath: '$(Build.ArtifactStagingDirectory)'
             artifact: terraform-plan
 
-# 6. Manual approval: main branch only
+# 6. Manual approval: main branch only. Feature branches stop after Plan.
 - stage: manual_approval
   displayName: Manual Approval
   dependsOn: terraform_plan
@@ -400,10 +356,10 @@ stages:
           inputs:
             notifyUsers: 'mailtomehdi133@gmail.com'
             approvers: 'mailtomehdi133@gmail.com'
-            instructions: 'Review the terraform-plan artifact, tfplan.txt, and scan reports before approving deployment.'
+            instructions: 'Review the terraform-plan artifact (tfplan and tfplan.txt) and relevant scan reports before approving deployment.'
             onTimeout: reject
 
-# 7. Apply the exact saved plan after approval
+# 7. Apply the exact saved plan after approval; do not create a new plan here.
 - stage: terraform_apply
   displayName: Terraform Apply
   dependsOn: manual_approval
@@ -434,7 +390,7 @@ stages:
           inputs:
             provider: azurerm
             command: init
-            workingDirectory: '$(Build.SourcesDirectory)/terraform'
+            workingDirectory: '$(terraformDirectory)'
             backendServiceArm: 'Azure-to-ADO'
             backendAzureRmStorageAccountName: 'tfstatestoragepipeline'
             backendAzureRmContainerName: 'tfstate'
@@ -457,6 +413,6 @@ stages:
           inputs:
             provider: azurerm
             command: apply
-            workingDirectory: '$(Build.SourcesDirectory)/terraform'
+            workingDirectory: '$(terraformDirectory)'
             environmentServiceNameAzureRM: 'Azure-to-ADO'
             commandOptions: '"$(Pipeline.Workspace)/terraform-plan/tfplan"'

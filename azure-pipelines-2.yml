@@ -1,0 +1,248 @@
+
+pool:
+  name: DevOps-Agents
+
+parameters:
+  - name: runGitleaks
+    displayName: Run Gitleaks Scan
+    type: boolean
+    default: false
+
+  - name: runtfsec
+    displayName: Run TfSec Scan
+    type: boolean
+    default: false
+
+  - name: runtflint
+    displayName: Run Tflint Scan
+    type: boolean
+    default: false
+
+  - name: runtfvalidate
+    displayName: Run Terrform Init and Terraform Validate
+    type: boolean
+    default: false
+
+
+trigger:
+  branches:
+    include:
+      - main
+      - features/*
+
+stages:
+
+# 1. Scan Git history for secrets
+- stage: gitleaks
+  dependsOn: []
+  condition: ${{ parameters.runGitleaks }}
+  displayName: Gitleaks Secret Scan
+  jobs:
+    - job: gitleaks_scan
+      displayName: Scan repository for secrets
+      steps:
+        - checkout: self
+          fetchDepth: 0
+
+        - task: PowerShell@2
+          displayName: Run Gitleaks
+          inputs:
+            targetType: inline
+            script: |
+              gitleaks version
+              gitleaks git --redact --exit-code 1 "$(Build.SourcesDirectory)"
+
+# 2. Scan Terraform security configuration
+- stage: tfsec
+  dependsOn: []
+  displayName: tfsec Security Scan
+  condition: ${{ parameters.runtfsec }}
+  jobs:
+    - job: tfsec_scan
+      displayName: Scan Terraform
+      steps:
+        - task: PowerShell@2
+          displayName: Run tfsec
+          inputs:
+            targetType: inline
+            script: |
+              $tfDir = "$(Build.SourcesDirectory)/terraform"
+              if (!(Test-Path $tfDir)) {
+                throw "Terraform directory not found: $tfDir"
+              }
+              tfsec $tfDir
+
+# 3. Check Terraform code quality
+- stage: tflint
+  dependsOn: []
+  condition: ${{ parameters.runtflint }}
+  displayName: TFLint Scan
+  jobs:
+    - job: tflint_scan
+      displayName: Lint Terraform
+      steps:
+        - task: PowerShell@2
+          displayName: Run TFLint
+          inputs:
+            targetType: inline
+            script: |
+              $tfDir = "$(Build.SourcesDirectory)/terraform"
+              tflint --version
+              tflint --chdir="$tfDir" --init
+              tflint --chdir="$tfDir"
+
+# 4. Install Terraform
+- stage: terraform_install
+  displayName: Install Terraform
+  jobs:
+    - job: install_terraform
+      steps:
+        - task: TerraformInstaller@1
+          inputs:
+            terraformVersion: 'latest'
+
+# 5. Initialize and validate Terraform
+- stage: terraform_init_validate
+  dependsOn: []
+  displayName: Terraform Init and Validate
+  condition: ${{ parameters.runtfvalidate }}
+  jobs:
+    - job: init_validate
+      steps:
+        - checkout: self
+
+        - task: TerraformTask@5
+          displayName: Terraform Init
+          inputs:
+            provider: azurerm
+            command: init
+            workingDirectory: '$(Build.SourcesDirectory)/terraform'
+            backendServiceArm: 'Azure-to-ADO'
+            backendAzureRmStorageAccountName: 'tfstatestoragepipeline'
+            backendAzureRmContainerName: 'tfstate'
+            backendAzureRmKey: 'infra.tfstate'
+
+        - task: TerraformTask@5
+          displayName: Terraform Validate
+          inputs:
+            provider: azurerm
+            command: validate
+            workingDirectory: '$(Build.SourcesDirectory)/terraform'
+
+# 6. Generate and publish a saved Terraform plan
+- stage: terraform_plan
+  dependsOn:
+  - gitleaks
+  - tfsec
+  - tflint
+  - terraform_init_validate
+
+  condition: |
+    and(
+      not(canceled()),
+      or(
+        eq('${{ parameters.runGitleaks }}', 'false'),
+        eq(dependencies.gitleaks.result, 'Succeeded')
+      ),
+      or(
+        eq('${{ parameters.runtfsec }}', 'false'),
+        eq(dependencies.tfsec.result, 'Succeeded')
+      ),
+      or(
+        eq('${{ parameters.runtflint }}', 'false'),
+        eq(dependencies.tflint.result, 'Succeeded')
+      ),
+      or(
+        eq('${{ parameters.runtfvalidate }}', 'false'),
+        eq(dependencies.terraform_init_validate.result, 'Succeeded')
+      )
+    )
+
+  displayName: Terraform Plan
+  jobs:
+    - job: plan
+      displayName: Create Terraform Plan
+      steps:
+        - checkout: self
+
+        - task: TerraformTask@5
+          displayName: Terraform Init
+          inputs:
+            provider: azurerm
+            command: init
+            workingDirectory: '$(Build.SourcesDirectory)/terraform'
+            backendServiceArm: 'Azure-to-ADO'
+            backendAzureRmStorageAccountName: 'tfstatestoragepipeline'
+            backendAzureRmContainerName: 'tfstate'
+            backendAzureRmKey: 'infra.tfstate'
+
+        - task: TerraformTask@5
+          displayName: Terraform Plan
+          inputs:
+            provider: azurerm
+            command: plan
+            workingDirectory: '$(Build.SourcesDirectory)/terraform'
+            environmentServiceNameAzureRM: 'Azure-to-ADO'
+            commandOptions: '-out="$(Build.ArtifactStagingDirectory)/tfplan"'
+
+        - task: PublishPipelineArtifact@1
+          displayName: Publish Saved Plan
+          inputs:
+            targetPath: '$(Build.ArtifactStagingDirectory)/tfplan'
+            artifact: terraform-plan
+
+# 7. Require approval on main before applying
+- stage: manual_approval
+  displayName: Manual Approval
+  dependsOn: terraform_plan
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+    - job: approval
+      displayName: Review Terraform Plan
+      pool: server
+      timeoutInMinutes: 1440
+      steps:
+        - task: ManualValidation@1
+          timeoutInMinutes: 1440
+          inputs:
+            notifyUsers: 'mailtomehdi133@gmail.com'
+            approvers: 'mailtomehdi133@gmail.com'
+            instructions: 'Review the Terraform Plan and pipeline logs before approving the Apply stage.'
+            onTimeout: reject
+
+# 8. Apply the exact saved plan after approval
+- stage: terraform_apply
+  displayName: Terraform Apply
+  dependsOn: manual_approval
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+    - job: apply
+      displayName: Apply Terraform Plan
+      steps:
+        - checkout: self
+
+        - task: DownloadPipelineArtifact@2
+          displayName: Download Saved Plan
+          inputs:
+            artifact: terraform-plan
+            path: '$(Pipeline.Workspace)/terraform-plan'
+
+        - task: TerraformTask@5
+          displayName: Terraform Init
+          inputs:
+            provider: azurerm
+            command: init
+            workingDirectory: '$(Build.SourcesDirectory)/terraform'
+            backendServiceArm: 'Azure-to-ADO'
+            backendAzureRmStorageAccountName: 'tfstatestoragepipeline'
+            backendAzureRmContainerName: 'tfstate'
+            backendAzureRmKey: 'infra.tfstate'
+
+        - task: TerraformTask@5
+          displayName: Terraform Apply Saved Plan
+          inputs:
+            provider: azurerm
+            command: apply
+            workingDirectory: '$(Build.SourcesDirectory)/terraform'
+            environmentServiceNameAzureRM: 'Azure-to-ADO'
+            commandOptions: '"$(Pipeline.Workspace)/terraform-plan/tfplan"'

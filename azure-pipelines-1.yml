@@ -38,7 +38,7 @@ stages:
 - stage: gitleaks
   displayName: Gitleaks Secret Scan
   dependsOn: []
-  condition: ${{ parameters.runGitleaks }}
+  condition: eq('${{ parameters.runGitleaks }}', 'true')
   jobs:
     - job: gitleaks_scan
       displayName: Scan Repository for Secrets
@@ -86,7 +86,7 @@ stages:
 - stage: tfsec
   displayName: tfsec Security Scan
   dependsOn: []
-  condition: ${{ parameters.runtfsec }}
+  condition: eq('${{ parameters.runtfsec }}', 'true')
   jobs:
     - job: tfsec_scan
       displayName: Scan Terraform Security
@@ -133,7 +133,7 @@ stages:
 - stage: tflint
   displayName: TFLint Code Quality Scan
   dependsOn: []
-  condition: ${{ parameters.runtflint }}
+  condition: eq('${{ parameters.runtflint }}', 'true')
   jobs:
     - job: tflint_scan
       displayName: Lint Terraform
@@ -187,7 +187,7 @@ stages:
 - stage: terraform_init_validate
   displayName: Terraform Init and Validate
   dependsOn: []
-  condition: ${{ parameters.runtfvalidate }}
+  condition: eq('${{ parameters.runtfvalidate }}', 'true')
   jobs:
     - job: init_validate
       displayName: Initialize and Validate Terraform
@@ -217,7 +217,8 @@ stages:
             command: validate
             workingDirectory: '$(Build.SourcesDirectory)/terraform'
 
-# 5. Terraform Plan: selected checks must succeed; disabled checks may be skipped
+# 5. Terraform Plan: selected checks must succeed; disabled checks may be skipped.
+# Note: the scanner scripts intentionally fail their stage when findings are detected.
 - stage: terraform_plan
   displayName: Terraform Plan
   dependsOn:
@@ -225,24 +226,26 @@ stages:
     - tfsec
     - tflint
     - terraform_init_validate
+  # Plan runs only when every selected check succeeded.
+  # Disabled optional stages are expected to be Skipped and do not block Plan.
   condition: |
     and(
       not(canceled()),
       or(
         eq('${{ parameters.runGitleaks }}', 'false'),
-        eq(dependencies.gitleaks.result, 'Succeeded')
+        in(dependencies.gitleaks.result, 'Succeeded')
       ),
       or(
         eq('${{ parameters.runtfsec }}', 'false'),
-        eq(dependencies.tfsec.result, 'Succeeded')
+        in(dependencies.tfsec.result, 'Succeeded')
       ),
       or(
         eq('${{ parameters.runtflint }}', 'false'),
-        eq(dependencies.tflint.result, 'Succeeded')
+        in(dependencies.tflint.result, 'Succeeded')
       ),
       or(
         eq('${{ parameters.runtfvalidate }}', 'false'),
-        eq(dependencies.terraform_init_validate.result, 'Succeeded')
+        in(dependencies.terraform_init_validate.result, 'Succeeded')
       )
     )
   jobs:
@@ -284,6 +287,61 @@ stages:
             workingDirectory: '$(Build.SourcesDirectory)/terraform'
             environmentServiceNameAzureRM: 'Azure-to-ADO'
             commandOptions: '-out="$(Build.ArtifactStagingDirectory)/tfplan"'
+
+        # Infracost cost estimate. Configure INFRACOST_API_KEY as a secret pipeline variable.
+        - task: PowerShell@2
+          displayName: Download Infracost and Generate Cost Estimate
+          inputs:
+            targetType: inline
+            script: |
+              $ErrorActionPreference = "Stop"
+              $infracostVersion = "0.10.46"
+              $toolDir = "$(Agent.TempDirectory)\infracost"
+              $zipPath = "$(Agent.TempDirectory)\infracost-windows-amd64.zip"
+              $tfDir = "$(Build.SourcesDirectory)\terraform"
+              $reportDir = "$(Build.ArtifactStagingDirectory)\infracost"
+              $reportJson = Join-Path $reportDir "infracost-breakdown.json"
+
+              New-Item -ItemType Directory -Force -Path $toolDir, $reportDir | Out-Null
+
+              $downloadUrl = "https://github.com/infracost/infracost/releases/download/v$infracostVersion/infracost-windows-amd64.zip"
+              Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath
+              Expand-Archive -LiteralPath $zipPath -DestinationPath $toolDir -Force
+
+              $infracostExe = Get-ChildItem -Path $toolDir -Filter "infracost.exe" -Recurse |
+                Select-Object -First 1 -ExpandProperty FullName
+              if (!$infracostExe) {
+                throw "infracost.exe was not found after extracting the downloaded ZIP."
+              }
+
+              & $infracostExe --version
+              if ($LASTEXITCODE -ne 0) {
+                throw "Infracost executable failed to start."
+              }
+
+              if (!(Test-Path $tfDir)) {
+                throw "Terraform directory not found: $tfDir"
+              }
+              if ([string]::IsNullOrWhiteSpace($env:INFRACOST_API_KEY)) {
+                throw "INFRACOST_API_KEY is not set. Add it as a secret pipeline variable."
+              }
+
+              & $infracostExe breakdown --path $tfDir --format json --out-file $reportJson
+              $infracostExitCode = $LASTEXITCODE
+              if ($infracostExitCode -ne 0) {
+                throw "Infracost breakdown failed. Review the task log."
+              }
+
+              Write-Host "Infracost JSON report created: $reportJson"
+          env:
+            INFRACOST_API_KEY: $(INFRACOST_API_KEY)
+
+        - task: PublishPipelineArtifact@1
+          displayName: Publish Infracost Cost Estimate
+          condition: always()
+          inputs:
+            targetPath: '$(Build.ArtifactStagingDirectory)/infracost'
+            artifact: infracost-report
 
         # Run from the Terraform configuration directory so the initialized
         # provider installation and configuration are in context.

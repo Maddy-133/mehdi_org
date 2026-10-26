@@ -1,6 +1,10 @@
-
 pool:
   name: DevOps-Agents
+
+# For production, replace "latest" with the exact Terraform version
+# approved for your repository, and keep it identical in Plan and Apply.
+variables:
+  terraformVersion: 'latest'
 
 parameters:
   - name: runGitleaks
@@ -30,17 +34,14 @@ trigger:
       - features/*
 
 stages:
-
 # 1. Gitleaks: scan Git history for secrets
 - stage: gitleaks
   displayName: Gitleaks Secret Scan
   dependsOn: []
   condition: ${{ parameters.runGitleaks }}
-
   jobs:
     - job: gitleaks_scan
       displayName: Scan Repository for Secrets
-
       steps:
         - checkout: self
           fetchDepth: 0
@@ -56,7 +57,7 @@ stages:
 
               gitleaks version
               if ($LASTEXITCODE -ne 0) {
-                throw "Gitleaks is unavailable"
+                throw "Gitleaks is unavailable on the agent."
               }
 
               gitleaks git `
@@ -65,15 +66,14 @@ stages:
                 --report-path "$reportDir/gitleaks-report.json" `
                 --exit-code 1 `
                 "$(Build.SourcesDirectory)"
-
               $scanExitCode = $LASTEXITCODE
 
               if ($scanExitCode -ne 0) {
-                Set-Content "$reportDir/scan-status.txt" "Gitleaks failed or found secrets"
-                throw "Gitleaks scan failed. Review the report."
+                Set-Content "$reportDir/scan-status.txt" "Gitleaks failed or detected secrets."
+                throw "Gitleaks scan failed. Review the published report."
               }
 
-              Set-Content "$reportDir/scan-status.txt" "Gitleaks scan passed"
+              Set-Content "$reportDir/scan-status.txt" "Gitleaks scan passed."
 
         - task: PublishPipelineArtifact@1
           displayName: Publish Gitleaks Report
@@ -82,17 +82,14 @@ stages:
             targetPath: '$(Build.ArtifactStagingDirectory)/scan-reports/gitleaks'
             artifact: gitleaks-report
 
-
 # 2. tfsec: scan Terraform security
 - stage: tfsec
   displayName: tfsec Security Scan
   dependsOn: []
   condition: ${{ parameters.runtfsec }}
-
   jobs:
     - job: tfsec_scan
       displayName: Scan Terraform Security
-
       steps:
         - checkout: self
 
@@ -107,27 +104,23 @@ stages:
 
               tfsec --version
               if ($LASTEXITCODE -ne 0) {
-                throw "tfsec is unavailable"
+                throw "tfsec is unavailable on the agent."
               }
 
               $tfDir = "$(Build.SourcesDirectory)/terraform"
-
               if (!(Test-Path $tfDir)) {
                 throw "Terraform directory not found: $tfDir"
               }
 
-              tfsec $tfDir `
-                --format json `
-                --out "$reportDir/tfsec-report.json"
-
+              tfsec $tfDir --format json --out "$reportDir/tfsec-report.json"
               $scanExitCode = $LASTEXITCODE
 
               if ($scanExitCode -ne 0) {
-                Set-Content "$reportDir/scan-status.txt" "tfsec failed or reported findings"
-                throw "tfsec scan failed. Review the report."
+                Set-Content "$reportDir/scan-status.txt" "tfsec failed or reported findings."
+                throw "tfsec scan failed. Review the published report."
               }
 
-              Set-Content "$reportDir/scan-status.txt" "tfsec scan passed"
+              Set-Content "$reportDir/scan-status.txt" "tfsec scan passed."
 
         - task: PublishPipelineArtifact@1
           displayName: Publish tfsec Report
@@ -136,17 +129,14 @@ stages:
             targetPath: '$(Build.ArtifactStagingDirectory)/scan-reports/tfsec'
             artifact: tfsec-report
 
-
 # 3. TFLint: check Terraform code quality
 - stage: tflint
   displayName: TFLint Code Quality Scan
   dependsOn: []
   condition: ${{ parameters.runtflint }}
-
   jobs:
     - job: tflint_scan
       displayName: Lint Terraform
-
       steps:
         - checkout: self
 
@@ -161,31 +151,30 @@ stages:
 
               tflint --version
               if ($LASTEXITCODE -ne 0) {
-                throw "TFLint is unavailable"
+                throw "TFLint is unavailable on the agent."
               }
 
               $tfDir = "$(Build.SourcesDirectory)/terraform"
-
               if (!(Test-Path $tfDir)) {
                 throw "Terraform directory not found: $tfDir"
               }
 
               tflint --chdir="$tfDir" --init
-              if ($LASTEXITCODE -ne 0) {
-                throw "TFLint initialization failed"
+              $initExitCode = $LASTEXITCODE
+              if ($initExitCode -ne 0) {
+                throw "TFLint initialization failed."
               }
 
-              tflint --chdir="$tfDir" --format=json |
-                Out-File "$reportDir/tflint-report.json" -Encoding utf8
-
+              $tflintOutput = & tflint --chdir="$tfDir" --format=json
               $scanExitCode = $LASTEXITCODE
+              $tflintOutput | Out-File "$reportDir/tflint-report.json" -Encoding utf8
 
               if ($scanExitCode -ne 0) {
-                Set-Content "$reportDir/scan-status.txt" "TFLint failed or reported issues"
-                throw "TFLint scan failed. Review the report."
+                Set-Content "$reportDir/scan-status.txt" "TFLint failed or reported issues."
+                throw "TFLint scan failed. Review the published report."
               }
 
-              Set-Content "$reportDir/scan-status.txt" "TFLint scan passed"
+              Set-Content "$reportDir/scan-status.txt" "TFLint scan passed."
 
         - task: PublishPipelineArtifact@1
           displayName: Publish TFLint Report
@@ -194,29 +183,21 @@ stages:
             targetPath: '$(Build.ArtifactStagingDirectory)/scan-reports/tflint'
             artifact: tflint-report
 
-
-# 4. Terraform Init and Validate (optional)
+# 4. Optional Terraform Init and Validate
 - stage: terraform_init_validate
   displayName: Terraform Init and Validate
   dependsOn: []
   condition: ${{ parameters.runtfvalidate }}
-
   jobs:
     - job: init_validate
       displayName: Initialize and Validate Terraform
-
       steps:
         - checkout: self
 
-        - task: PowerShell@2
-          displayName: Verify Terraform
+        - task: TerraformInstaller@1
+          displayName: Install Terraform
           inputs:
-            targetType: inline
-            script: |
-              terraform --version
-              if ($LASTEXITCODE -ne 0) {
-                throw "Terraform is unavailable on the agent"
-              }
+            terraformVersion: '$(terraformVersion)'
 
         - task: TerraformTask@5
           displayName: Terraform Init
@@ -236,17 +217,14 @@ stages:
             command: validate
             workingDirectory: '$(Build.SourcesDirectory)/terraform'
 
-
-# 5. Terraform Plan: wait for selected checks
+# 5. Terraform Plan: selected checks must succeed; disabled checks may be skipped
 - stage: terraform_plan
   displayName: Terraform Plan
-
   dependsOn:
     - gitleaks
     - tfsec
     - tflint
     - terraform_init_validate
-
   condition: |
     and(
       not(canceled()),
@@ -267,23 +245,25 @@ stages:
         eq(dependencies.terraform_init_validate.result, 'Succeeded')
       )
     )
-
   jobs:
     - job: plan
       displayName: Create Terraform Plan
-
       steps:
         - checkout: self
 
+        - task: TerraformInstaller@1
+          displayName: Install Terraform
+          inputs:
+            terraformVersion: '$(terraformVersion)'
+
         - task: PowerShell@2
-          displayName: Verify Terraform
+          displayName: Create Artifact Directory
           inputs:
             targetType: inline
             script: |
+              New-Item -ItemType Directory -Force `
+                -Path "$(Build.ArtifactStagingDirectory)" | Out-Null
               terraform --version
-              if ($LASTEXITCODE -ne 0) {
-                throw "Terraform is unavailable on the agent"
-              }
 
         - task: TerraformTask@5
           displayName: Terraform Init
@@ -296,14 +276,6 @@ stages:
             backendAzureRmContainerName: 'tfstate'
             backendAzureRmKey: 'infra.tfstate'
 
-        - task: PowerShell@2
-          displayName: Create Artifact Directory
-          inputs:
-            targetType: inline
-            script: |
-              New-Item -ItemType Directory -Force `
-                -Path "$(Build.ArtifactStagingDirectory)" | Out-Null
-
         - task: TerraformTask@5
           displayName: Terraform Plan
           inputs:
@@ -313,67 +285,8 @@ stages:
             environmentServiceNameAzureRM: 'Azure-to-ADO'
             commandOptions: '-out="$(Build.ArtifactStagingDirectory)/tfplan"'
 
-
-        # Generate a readable plan for the manager
-        - task: PowerShell@2
-          displayName: Generate Readable Terraform Plan
-          inputs:
-            targetType: inline
-            script: |
-              terraform show -no-color "$(Build.ArtifactStagingDirectory)/tfplan" |
-              Out-File "$(Build.ArtifactStagingDirectory)/tfplan.txt" -Encoding utf8
-
-        # Publish both the saved plan and readable report
-        - task: PublishPipelineArtifact@1
-          displayName: Publish Saved Terraform Plan
-          inputs:
-            targetPath: '$(Build.ArtifactStagingDirectory)/tfplan'
-            artifact: terraform-plan
-
-
-# 6. Manual approval: main branch only
-- stage: manual_approval
-  displayName: Manual Approval
-  dependsOn: terraform_plan
-  condition: |
-    and(
-      succeeded(),
-      eq(variables['Build.SourceBranch'], 'refs/heads/main')
-    )
-
-  jobs:
-    - job: approval
-      displayName: Review Terraform Plan
-      pool: server
-      timeoutInMinutes: 1440
-
-      steps:
-        - task: ManualValidation@1
-          timeoutInMinutes: 1440
-          inputs:
-            notifyUsers: 'mailtomehdi133@gmail.com'
-            approvers: 'mailtomehdi133@gmail.com'
-            instructions: 'Review the Terraform Plan and scan reports before approving deployment.'
-            onTimeout: reject
-
-
-# 7. Apply the saved plan after approval
-- stage: terraform_apply
-  displayName: Terraform Apply
-  dependsOn: manual_approval
-  condition: |
-    and(
-      succeeded(),
-      eq(variables['Build.SourceBranch'], 'refs/heads/main')
-    )
-
-  jobs:
-    - job: apply
-      displayName: Apply Approved Terraform Plan
-
-      steps:
-        - checkout: self
-
+        # Run from the Terraform configuration directory so the initialized
+        # provider installation and configuration are in context.
         - task: PowerShell@2
           displayName: Generate Readable Terraform Plan
           inputs:
@@ -387,24 +300,70 @@ stages:
                 throw "Saved Terraform plan not found: $planFile"
               }
 
-              if (!(Test-Path "$tfDir/.terraform/providers")) {
-                throw "Terraform provider files not found. Check Terraform Init."
-              }
-
               Set-Location $tfDir
-
-              Write-Host "Terraform version:"
               terraform --version
 
-              Write-Host "Generating readable plan..."
-              terraform show -no-color $planFile |
-                Out-File $reportFile -Encoding utf8
+              $showOutput = & terraform show -no-color $planFile 2>&1
+              $showExitCode = $LASTEXITCODE
+              $showOutput | Out-File $reportFile -Encoding utf8
 
-              if ($LASTEXITCODE -ne 0) {
-                throw "Failed to generate readable Terraform plan."
+              if ($showExitCode -ne 0) {
+                Write-Host "terraform show failed. Diagnostic output was written to tfplan.txt."
+                throw "Failed to generate readable Terraform plan. Check provider installation and the tfplan.txt output."
               }
 
-              Write-Host "Readable plan saved to: $reportFile"
+              Write-Host "Readable plan created: $reportFile"
+
+        # Publish both the binary plan and readable text in one artifact.
+        - task: PublishPipelineArtifact@1
+          displayName: Publish Terraform Plan and Readable Report
+          condition: always()
+          inputs:
+            targetPath: '$(Build.ArtifactStagingDirectory)'
+            artifact: terraform-plan
+
+# 6. Manual approval: main branch only
+- stage: manual_approval
+  displayName: Manual Approval
+  dependsOn: terraform_plan
+  condition: |
+    and(
+      succeeded(),
+      eq(variables['Build.SourceBranch'], 'refs/heads/main')
+    )
+  jobs:
+    - job: approval
+      displayName: Review Terraform Plan
+      pool: server
+      timeoutInMinutes: 1440
+      steps:
+        - task: ManualValidation@1
+          timeoutInMinutes: 1440
+          inputs:
+            notifyUsers: 'mailtomehdi133@gmail.com'
+            approvers: 'mailtomehdi133@gmail.com'
+            instructions: 'Review the terraform-plan artifact, tfplan.txt, and scan reports before approving deployment.'
+            onTimeout: reject
+
+# 7. Apply the exact saved plan after approval
+- stage: terraform_apply
+  displayName: Terraform Apply
+  dependsOn: manual_approval
+  condition: |
+    and(
+      succeeded(),
+      eq(variables['Build.SourceBranch'], 'refs/heads/main')
+    )
+  jobs:
+    - job: apply
+      displayName: Apply Approved Terraform Plan
+      steps:
+        - checkout: self
+
+        - task: TerraformInstaller@1
+          displayName: Install Terraform
+          inputs:
+            terraformVersion: '$(terraformVersion)'
 
         - task: DownloadPipelineArtifact@2
           displayName: Download Saved Plan
@@ -422,6 +381,18 @@ stages:
             backendAzureRmStorageAccountName: 'tfstatestoragepipeline'
             backendAzureRmContainerName: 'tfstate'
             backendAzureRmKey: 'infra.tfstate'
+
+        - task: PowerShell@2
+          displayName: Verify Downloaded Plan
+          inputs:
+            targetType: inline
+            script: |
+              $planFile = "$(Pipeline.Workspace)/terraform-plan/tfplan"
+              if (!(Test-Path $planFile)) {
+                throw "Downloaded saved plan not found: $planFile"
+              }
+              Write-Host "Saved plan is present."
+              terraform --version
 
         - task: TerraformTask@5
           displayName: Apply Saved Terraform Plan

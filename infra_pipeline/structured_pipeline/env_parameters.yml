@@ -57,7 +57,7 @@ stages:
   dependsOn: terraform_init_validate
   displayName: Terraform Plan
   jobs:
-    - template: jobs/terraform-init-plan.yml
+    - template: jobs/terraform-plan.yml
 
 # 7. Require approval on main before applying
 - stage: manual_approval
@@ -65,7 +65,7 @@ stages:
   dependsOn: terraform_plan
   condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
   jobs:
-    - template: jobs/manual_approval.yml
+    - template: jobs/production-approval.yml
   
 # 8. Apply the exact saved plan after approval
 - stage: terraform_apply

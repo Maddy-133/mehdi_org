@@ -17,7 +17,6 @@ stages:
 
 # 1. Scan Git history for secrets
 - stage: gitleaks
-  dependsOn: []
   displayName: Gitleaks Secret Scan
   jobs:
     - job: gitleaks_scan
@@ -36,7 +35,6 @@ stages:
 
 # 2. Scan Terraform security configuration
 - stage: tfsec
-  dependsOn: []
   displayName: tfsec Security Scan
   jobs:
     - job: tfsec_scan
@@ -55,7 +53,6 @@ stages:
 
 # 3. Check Terraform code quality
 - stage: tflint
-  dependsOn: []
   displayName: TFLint Scan
   jobs:
     - job: tflint_scan
@@ -83,7 +80,6 @@ stages:
 
 # 5. Initialize and validate Terraform
 - stage: terraform_init_validate
-  dependsOn: []
   displayName: Terraform Init and Validate
   jobs:
     - job: init_validate

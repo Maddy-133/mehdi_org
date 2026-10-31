@@ -27,38 +27,48 @@ stages:
   displayName: Gitleaks Secret Scan
   jobs:
     -   template: jobs/gitleaks_scan.yml
+        parameters:
+          environment: ${{ parameters.environment }}
 
 # 2. Scan Terraform security configuration
 - stage: tfsec
   displayName: tfsec Security Scan
   jobs:
     -   template: jobs/tfsec_scan.yml
+        parameters:
+          environment: ${{ parameters.environment }}
 
 # 3. Check Terraform code quality
 - stage: tflint
   displayName: TFLint Scan
   jobs:
     - template: jobs/tflint_scan.yml
+      parameters:
+        environment: ${{ parameters.environment }}
 
 # 4. Install Terraform
 - stage: terraform_install
   displayName: Install Terraform
   jobs:
     - template: jobs/terraform_install.yml
-
+      parameters:
+        environment: ${{ parameters.environment }}
 # 5. Initialize and validate Terraform
 - stage: terraform_init_validate
   displayName: Terraform Init and Validate
   jobs:
     - template: jobs/terraform-init-validate.yml
-
+      parameters:
+        environment: ${{ parameters.environment }}
+    
 # 6. Generate and publish a saved Terraform plan
 - stage: terraform_plan
   dependsOn: terraform_init_validate
   displayName: Terraform Plan
   jobs:
     - template: jobs/terraform-plan.yml
-
+      parameters:
+        environment: ${{ parameters.environment }}
 # 7. Require approval on main before applying
 - stage: manual_approval
   displayName: Manual Approval
@@ -66,7 +76,9 @@ stages:
   condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
   jobs:
     - template: jobs/production-approval.yml
-  
+      parameters:
+        environment: ${{ parameters.environment }}
+          
 # 8. Apply the exact saved plan after approval
 - stage: terraform_apply
   displayName: Terraform Apply
@@ -74,3 +86,5 @@ stages:
   condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
   jobs:
     - template: jobs/terraform-apply.yml
+      parameters:
+        environment: ${{ parameters.environment }}

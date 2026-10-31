@@ -1,0 +1,13 @@
+  jobs:
+    - job: tflint_scan
+      displayName: Lint Terraform
+      steps:
+        - task: PowerShell@2
+          displayName: Run TFLint
+          inputs:
+            targetType: inline
+            script: |
+              $tfDir = "$(Build.SourcesDirectory)/terraform/env/${{ parameters.environment }}"
+              tflint --version
+              tflint --chdir="$tfDir" --init
+              tflint --chdir="$tfDir"

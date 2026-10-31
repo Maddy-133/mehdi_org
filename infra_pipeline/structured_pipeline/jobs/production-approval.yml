@@ -1,0 +1,13 @@
+  jobs:
+    - job: approval
+      displayName: Review Terraform Plan
+      pool: server
+      timeoutInMinutes: 1440
+      steps:
+        - task: ManualValidation@1
+          timeoutInMinutes: 1440
+          inputs:
+            notifyUsers: 'mailtomehdi133@gmail.com'
+            approvers: 'mailtomehdi133@gmail.com'
+            instructions: 'Review the Terraform Plan and pipeline logs before approving the Apply stage.'
+            onTimeout: reject

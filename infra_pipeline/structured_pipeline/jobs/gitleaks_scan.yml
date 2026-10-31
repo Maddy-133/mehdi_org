@@ -1,0 +1,14 @@
+  jobs:
+    - job: gitleaks_scan
+      displayName: Scan repository for secrets
+      steps:
+        - checkout: self
+          fetchDepth: 0
+
+        - task: PowerShell@2
+          displayName: Run Gitleaks
+          inputs:
+            targetType: inline
+            script: |
+              gitleaks version
+              gitleaks git --redact --exit-code 1 "$(Build.SourcesDirectory)"

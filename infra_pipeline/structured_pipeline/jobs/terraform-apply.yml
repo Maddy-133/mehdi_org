@@ -1,0 +1,31 @@
+  jobs:
+    - job: apply
+      displayName: Apply Terraform Plan
+      steps:
+        - checkout: self
+
+        - task: DownloadPipelineArtifact@2
+          displayName: Download Saved Plan
+          inputs:
+            artifact: terraform-plan
+            path: '$(Pipeline.Workspace)/terraform-plan'
+
+        - task: TerraformTask@5
+          displayName: Terraform Init
+          inputs:
+            provider: azurerm
+            command: init
+            workingDirectory: '$(Build.SourcesDirectory)/terraform/env/${{ parameters.environment }}'
+            backendServiceArm: 'Azure-to-ADO'
+            backendAzureRmStorageAccountName: 'infraautopipeline'
+            backendAzureRmContainerName: 'infrapipeline'
+            backendAzureRmKey: '${{ parameters.environment }}.infrapipeline'
+
+        - task: TerraformTask@5
+          displayName: Terraform Apply Saved Plan
+          inputs:
+            provider: azurerm
+            command: apply
+            workingDirectory: '$(Build.SourcesDirectory)/terraform/env/${{ parameters.environment }}'
+            environmentServiceNameAzureRM: 'Azure-to-ADO'
+            commandOptions: '"$(Pipeline.Workspace)/terraform-plan/tfplan"'

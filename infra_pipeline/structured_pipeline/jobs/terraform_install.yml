@@ -1,0 +1,6 @@
+  jobs:
+    - job: install_terraform
+      steps:
+        - task: TerraformInstaller@1
+          inputs:
+            terraformVersion: 'latest'

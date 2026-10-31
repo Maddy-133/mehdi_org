@@ -1,0 +1,14 @@
+  jobs:
+    - job: tfsec_scan
+      displayName: Scan Terraform
+      steps:
+        - task: PowerShell@2
+          displayName: Run tfsec
+          inputs:
+            targetType: inline
+            script: |
+              $tfDir = "$(Build.SourcesDirectory)/terraform/env/${{ parameters.environment }}"
+              if (!(Test-Path $tfDir)) {
+                throw "Terraform directory not found: $tfDir"
+              }
+              tfsec $tfDir

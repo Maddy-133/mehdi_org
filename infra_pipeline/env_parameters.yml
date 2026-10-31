@@ -93,7 +93,6 @@ stages:
 - stage: terraform_init_validate
   dependsOn: []
   displayName: Terraform Init and Validate
-  condition: ${{ parameters.runtfvalidate }}
   jobs:
     - job: init_validate
       steps:

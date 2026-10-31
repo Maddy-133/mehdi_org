@@ -1,10 +1,10 @@
 pr_rgs = {
   rg1 = {
-    name     = "rg1"
+    name     = "prod_rg1"
     location = "eastus"
   }
   rg2 = {
-    name     = "rg2"
+    name     = "prod_rg2"
     location = "eastus"
   }
 }

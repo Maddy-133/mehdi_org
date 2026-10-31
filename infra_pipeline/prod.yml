@@ -2,27 +2,6 @@
 pool:
   name: DevOps-Agents
 
-parameters:
-  - name: runGitleaks
-    displayName: Run Gitleaks Scan
-    type: boolean
-    default: false
-
-  - name: runtfsec
-    displayName: Run TfSec Scan
-    type: boolean
-    default: false
-
-  - name: runtflint
-    displayName: Run Tflint Scan
-    type: boolean
-    default: false
-
-  - name: runtfvalidate
-    displayName: Run Terrform Init and Terraform Validate
-    type: boolean
-    default: false
-
 
 trigger:
   branches:
@@ -30,12 +9,15 @@ trigger:
       - main
       - features/*
 
+  paths:
+    include:
+      - terraform/env/prod/**
+
 stages:
 
 # 1. Scan Git history for secrets
 - stage: gitleaks
   dependsOn: []
-  condition: ${{ parameters.runGitleaks }}
   displayName: Gitleaks Secret Scan
   jobs:
     - job: gitleaks_scan
@@ -56,7 +38,6 @@ stages:
 - stage: tfsec
   dependsOn: []
   displayName: tfsec Security Scan
-  condition: ${{ parameters.runtfsec }}
   jobs:
     - job: tfsec_scan
       displayName: Scan Terraform
@@ -66,7 +47,7 @@ stages:
           inputs:
             targetType: inline
             script: |
-              $tfDir = "$(Build.SourcesDirectory)/terraform"
+              $tfDir = "$(Build.SourcesDirectory)/terraform/env/prod"
               if (!(Test-Path $tfDir)) {
                 throw "Terraform directory not found: $tfDir"
               }
@@ -75,7 +56,6 @@ stages:
 # 3. Check Terraform code quality
 - stage: tflint
   dependsOn: []
-  condition: ${{ parameters.runtflint }}
   displayName: TFLint Scan
   jobs:
     - job: tflint_scan
@@ -86,7 +66,7 @@ stages:
           inputs:
             targetType: inline
             script: |
-              $tfDir = "$(Build.SourcesDirectory)/terraform"
+              $tfDir = "$(Build.SourcesDirectory)/terraform/env/prod"
               tflint --version
               tflint --chdir="$tfDir" --init
               tflint --chdir="$tfDir"
@@ -105,7 +85,6 @@ stages:
 - stage: terraform_init_validate
   dependsOn: []
   displayName: Terraform Init and Validate
-  condition: ${{ parameters.runtfvalidate }}
   jobs:
     - job: init_validate
       steps:
@@ -116,47 +95,21 @@ stages:
           inputs:
             provider: azurerm
             command: init
-            workingDirectory: '$(Build.SourcesDirectory)/terraform'
+            workingDirectory: '$(Build.SourcesDirectory)/terraform/env/prod'
             backendServiceArm: 'Azure-to-ADO'
             backendAzureRmStorageAccountName: 'tfstatestoragepipeline'
             backendAzureRmContainerName: 'tfstate'
-            backendAzureRmKey: 'infra.tfstate'
+            backendAzureRmKey: 'prod.tfstate'
 
         - task: TerraformTask@5
           displayName: Terraform Validate
           inputs:
             provider: azurerm
             command: validate
-            workingDirectory: '$(Build.SourcesDirectory)/terraform'
+            workingDirectory: '$(Build.SourcesDirectory)/terraform/env/prod'
 
 # 6. Generate and publish a saved Terraform plan
 - stage: terraform_plan
-  dependsOn:
-  - gitleaks
-  - tfsec
-  - tflint
-  - terraform_init_validate
-
-  condition: |
-    and(
-      not(canceled()),
-      or(
-        eq('${{ parameters.runGitleaks }}', 'false'),
-        eq(dependencies.gitleaks.result, 'Succeeded')
-      ),
-      or(
-        eq('${{ parameters.runtfsec }}', 'false'),
-        eq(dependencies.tfsec.result, 'Succeeded')
-      ),
-      or(
-        eq('${{ parameters.runtflint }}', 'false'),
-        eq(dependencies.tflint.result, 'Succeeded')
-      ),
-      or(
-        eq('${{ parameters.runtfvalidate }}', 'false'),
-        eq(dependencies.terraform_init_validate.result, 'Succeeded')
-      )
-    )
 
   displayName: Terraform Plan
   jobs:
@@ -170,18 +123,18 @@ stages:
           inputs:
             provider: azurerm
             command: init
-            workingDirectory: '$(Build.SourcesDirectory)/terraform'
+            workingDirectory: '$(Build.SourcesDirectory)/terraform/env/prod'
             backendServiceArm: 'Azure-to-ADO'
             backendAzureRmStorageAccountName: 'tfstatestoragepipeline'
             backendAzureRmContainerName: 'tfstate'
-            backendAzureRmKey: 'infra.tfstate'
+            backendAzureRmKey: 'prod.tfstate'
 
         - task: TerraformTask@5
           displayName: Terraform Plan
           inputs:
             provider: azurerm
             command: plan
-            workingDirectory: '$(Build.SourcesDirectory)/terraform'
+            workingDirectory: '$(Build.SourcesDirectory)/terraform/env/prod'
             environmentServiceNameAzureRM: 'Azure-to-ADO'
             commandOptions: '-out="$(Build.ArtifactStagingDirectory)/tfplan"'
 
@@ -232,17 +185,17 @@ stages:
           inputs:
             provider: azurerm
             command: init
-            workingDirectory: '$(Build.SourcesDirectory)/terraform'
+            workingDirectory: '$(Build.SourcesDirectory)/terraform/env/prod'
             backendServiceArm: 'Azure-to-ADO'
             backendAzureRmStorageAccountName: 'tfstatestoragepipeline'
             backendAzureRmContainerName: 'tfstate'
-            backendAzureRmKey: 'infra.tfstate'
+            backendAzureRmKey: 'prod.tfstate'
 
         - task: TerraformTask@5
           displayName: Terraform Apply Saved Plan
           inputs:
             provider: azurerm
             command: apply
-            workingDirectory: '$(Build.SourcesDirectory)/terraform'
+            workingDirectory: '$(Build.SourcesDirectory)/terraform/env/prod'
             environmentServiceNameAzureRM: 'Azure-to-ADO'
             commandOptions: '"$(Pipeline.Workspace)/terraform-plan/tfplan"'

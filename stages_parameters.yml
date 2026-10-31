@@ -122,9 +122,9 @@ stages:
             command: init
             workingDirectory: '$(Build.SourcesDirectory)/terraform/env/dev'
             backendServiceArm: 'Azure-to-ADO'
-            backendAzureRmStorageAccountName: 'tfstatestoragepipeline'
-            backendAzureRmContainerName: 'tfstate'
-            backendAzureRmKey: 'infra.tfstate'
+            backendAzureRmStorageAccountName: 'infraautopipeline'
+            backendAzureRmContainerName: 'infrapipeline'
+            backendAzureRmKey: 'infra.infrapipeline'
 
         - task: TerraformTask@5
           displayName: Terraform Validate
@@ -176,9 +176,9 @@ stages:
             command: init
             workingDirectory: '$(Build.SourcesDirectory)/terraform/env/dev'
             backendServiceArm: 'Azure-to-ADO'
-            backendAzureRmStorageAccountName: 'tfstatestoragepipeline'
-            backendAzureRmContainerName: 'tfstate'
-            backendAzureRmKey: 'infra.tfstate'
+            backendAzureRmStorageAccountName: 'infraautopipeline'
+            backendAzureRmContainerName: 'infrapipeline'
+            backendAzureRmKey: 'infra.infrapipeline'
 
         - task: TerraformTask@5
           displayName: Terraform Plan
@@ -238,9 +238,9 @@ stages:
             command: init
             workingDirectory: '$(Build.SourcesDirectory)/terraform/env/dev'
             backendServiceArm: 'Azure-to-ADO'
-            backendAzureRmStorageAccountName: 'tfstatestoragepipeline'
-            backendAzureRmContainerName: 'tfstate'
-            backendAzureRmKey: 'infra.tfstate'
+            backendAzureRmStorageAccountName: 'infraautopipeline'
+            backendAzureRmContainerName: 'infrapipeline'
+            backendAzureRmKey: 'infra.infrapipeline'
 
         - task: TerraformTask@5
           displayName: Terraform Apply Saved Plan

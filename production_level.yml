@@ -218,9 +218,9 @@ stages:
             command: init
             workingDirectory: '$(terraformDirectory)'
             backendServiceArm: 'Azure-to-ADO'
-            backendAzureRmStorageAccountName: 'tfstatestoragepipeline'
-            backendAzureRmContainerName: 'tfstate'
-            backendAzureRmKey: 'infra.tfstate'
+            backendAzureRmStorageAccountName: 'infraautopipeline'
+            backendAzureRmContainerName: 'infrapipeline'
+            backendAzureRmKey: 'infra.infrapipeline'
 
         - task: TerraformTask@5
           displayName: Terraform Validate
@@ -287,9 +287,9 @@ stages:
             command: init
             workingDirectory: '$(terraformDirectory)'
             backendServiceArm: 'Azure-to-ADO'
-            backendAzureRmStorageAccountName: 'tfstatestoragepipeline'
-            backendAzureRmContainerName: 'tfstate'
-            backendAzureRmKey: 'infra.tfstate'
+            backendAzureRmStorageAccountName: 'infraautopipeline'
+            backendAzureRmContainerName: 'infrapipeline'
+            backendAzureRmKey: 'infra.infrapipeline'
 
         - task: TerraformTask@5
           displayName: Terraform Plan
@@ -392,9 +392,9 @@ stages:
             command: init
             workingDirectory: '$(terraformDirectory)'
             backendServiceArm: 'Azure-to-ADO'
-            backendAzureRmStorageAccountName: 'tfstatestoragepipeline'
-            backendAzureRmContainerName: 'tfstate'
-            backendAzureRmKey: 'infra.tfstate'
+            backendAzureRmStorageAccountName: 'infraautopipeline'
+            backendAzureRmContainerName: 'infrapipeline'
+            backendAzureRmKey: 'infra.infrapipeline'
 
         - task: PowerShell@2
           displayName: Verify Downloaded Plan

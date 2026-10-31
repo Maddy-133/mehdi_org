@@ -26,38 +26,38 @@ stages:
 - stage: gitleaks
   displayName: Gitleaks Secret Scan
   jobs:
-    -   template: structured_pipeline/jobs/gitleaks_scan.yml
+    -   template: jobs/gitleaks_scan.yml
 
 # 2. Scan Terraform security configuration
 - stage: tfsec
   displayName: tfsec Security Scan
   jobs:
-    -   template: /infra_pipeline/structured_pipeline/jobs/tfsec_scan.yml
+    -   template: jobs/tfsec_scan.yml
 
 # 3. Check Terraform code quality
 - stage: tflint
   displayName: TFLint Scan
   jobs:
-    - template: /infra_pipeline/structured_pipeline/jobs/tflint_scan.yml
+    - template: jobs/tflint_scan.yml
 
 # 4. Install Terraform
 - stage: terraform_install
   displayName: Install Terraform
   jobs:
-    - template: /infra_pipeline/structured_pipeline/jobs/terraform_install.yml
+    - template: jobs/terraform_install.yml
 
 # 5. Initialize and validate Terraform
 - stage: terraform_init_validate
   displayName: Terraform Init and Validate
   jobs:
-    - template: /infra_pipeline/structured_pipeline/jobs/terraform-init-validate.yml
+    - template: jobs/terraform-init-validate.yml
 
 # 6. Generate and publish a saved Terraform plan
 - stage: terraform_plan
   dependsOn: terraform_init_validate
   displayName: Terraform Plan
   jobs:
-    - template: /infra_pipeline/structured_pipeline/jobs/terraform-init-plan.yml
+    - template: jobs/terraform-init-plan.yml
 
 # 7. Require approval on main before applying
 - stage: manual_approval
@@ -65,7 +65,7 @@ stages:
   dependsOn: terraform_plan
   condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
   jobs:
-    - template: /infra_pipeline/structured_pipeline/jobs/manual_approval.yml
+    - template: jobs/manual_approval.yml
   
 # 8. Apply the exact saved plan after approval
 - stage: terraform_apply
@@ -73,4 +73,4 @@ stages:
   dependsOn: manual_approval
   condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
   jobs:
-    - template: /infra_pipeline/structured_pipeline/jobs/terraform-apply.yml
+    - template: jobs/terraform-apply.yml
